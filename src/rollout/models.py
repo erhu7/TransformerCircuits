@@ -4,152 +4,78 @@ import numpy as np
 
 
 class PositionalEmbedding(nn.Module):
-    """
-    Positional Embedding layer for transformer models.
-
-    This layer generates sinusoidal positional embeddings as described in the 
-    "Attention is All You Need" paper. The embeddings are precomputed and stored 
-    in a tensor, which is indexed during the forward pass.
-
-    Args:
-        num_positions (int): The maximum number of positions (sequence length) to embed.
-        embedding_dim (int): The dimension of the embedding vector.
-        batch_first (bool, optional): If True, the input and output tensors are provided 
-                                      as (batch, sequence, feature). Default is True.
-        *args: Additional arguments for the parent class.
-        **kwargs: Additional keyword arguments for the parent class.
-
-    Attributes:
-        d_model (int): The dimension of the embedding vector.
-        batch_first (bool): Indicates whether the input and output tensors are provided 
-                            as (batch, sequence, feature).
-        embedding (torch.Tensor): The precomputed positional embeddings.
-
-    Methods:
-        forward(x):
-            Computes the positional embeddings for the input tensor `x`.
-
-            Args:
-                x (torch.Tensor): The input tensor of shape (batch, sequence, feature) 
-                                  if `batch_first` is True, otherwise (sequence, batch, feature).
-
-            Returns:
-                torch.Tensor: The positional embeddings corresponding to the input tensor `x`.
-    """
-    def __init__(self, num_positions, embedding_dim, batch_first=True, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    """Sinusoidal positional embeddings."""
+    def __init__(self, num_positions: int, embedding_dim: int, batch_first: bool = True):
+        super().__init__()
         self.d_model = embedding_dim
         self.batch_first = batch_first
+        
+        # Compute position encodings once
         denominators = (10000)**(torch.arange(0, embedding_dim, 2)/embedding_dim)
         positions = torch.arange(0, num_positions)[:, None] / denominators[None, :]
-
+        
         self.embedding = torch.zeros(num_positions, embedding_dim, requires_grad=False)
         self.embedding[:, 0::2] = torch.sin(positions)
         self.embedding[:, 1::2] = torch.cos(positions)
 
-    def forward(self, x):
-        if self.batch_first:
-            return self.embedding[:x.shape[1], :]
-        return self.embedding[:x.shape[0], :]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        seq_len = x.shape[1] if self.batch_first else x.shape[0]
+        return self.embedding[:seq_len, :]
 
-class SimpleTransformer(nn.Module):
-    """
-    A simple Transformer model for sequence classification tasks.
-    Args:
-        d_model (int): The dimension of the embedding vector.
-        n_tokens (int): The number of tokens in the vocabulary.
-        max_positions (int): The maximum number of positions for positional encoding.
-        n_heads (int): The number of attention heads in the multi-head attention layer.
-        *args: Additional arguments for the nn.Module superclass.
-        **kwargs: Additional keyword arguments for the nn.Module superclass.
-    Attributes:
-        embed (nn.Embedding): Embedding layer for token embeddings.
-        position (PositionalEmbedding): Positional embedding layer.
-        attention_layer (nn.MultiheadAttention): Multi-head attention layer.
-        classify (nn.Linear): Linear layer for classification.
-    Methods:
-        forward(x):
-            Forward pass of the model.
-            Args:
-                x (torch.Tensor): Input tensor of token indices with shape (batch_size, sequence_length).
-            Returns:
-                torch.Tensor: Logits for the last token in the sequence with shape (batch_size, n_tokens).
-    """
-    def __init__(self, d_model, n_tokens, max_positions, n_heads, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # semantic + positional embedding
+class FlexibleTransformer(nn.Module):
+    """A transformer with configurable number of attention layers."""
+    
+    def __init__(
+        self,
+        d_model: int,
+        n_tokens: int,
+        max_positions: int,
+        n_heads: int,
+        n_attn_layers: int,
+    ):
+        super().__init__()
+        # Embeddings
         self.embed = nn.Embedding(n_tokens, d_model)
         self.position = PositionalEmbedding(max_positions, d_model)
-        # single attention layer
-        self.attention_layer = nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
-        # classification layer ouptuts the probability of each token in the vocabulary. 
-        self.classify = nn.Linear(d_model, n_tokens)
-
-    def forward(self, x):
-        x = self.embed(x)
         
-        positions = self.position(x)
-        x = x + positions
+        # Create n attention layers
+        self.attention_layers = nn.ModuleList([
+            nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
+            for _ in range(n_attn_layers)
+        ])
+        
+        # Output layer
+        self.classify = nn.Linear(d_model, n_tokens)
+        
+        # Create and register attention mask
+        mask = torch.tril(torch.ones(max_positions, max_positions))
+        self.register_buffer('attn_mask', mask)
 
-        attn, attention_weights = self.attention_layer(x, x, x)
-        x = x + attn
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._fwd_internal(x)
+    
+    def forward_with_weights(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        return self._fwd_internal(x, return_weights=True)
+    
+    def _fwd_internal(self, x: torch.Tensor, return_weights: bool = False):
+        if self.attn_mask.device != x.device:
+            self.attn_mask = self.attn_mask.to(x.device)
+            
+        x = self.embed(x)
+        x = x + self.position(x)
+        
+        attention_weights = []
+        for attention_layer in self.attention_layers:
+            attn_out, weights = attention_layer(x, x, x, attn_mask=self.attn_mask)
+            x = x + attn_out
+            if return_weights:
+                attention_weights.append(weights.detach())
         
         logits = self.classify(x)
         final_logit = logits[:, -1, :]
-        return final_logit
-    
-class ComplexTransformer(nn.Module):
-    """
-    ComplexTransformer is a neural network model that combines semantic and positional embeddings with multi-head attention layers to perform sequence classification.
-    Attributes:
-        max_positions (int): The maximum number of positions in the input sequence.
-        embed (nn.Embedding): Embedding layer for token embeddings.
-        position (PositionalEmbedding): Positional embedding layer.
-        attention_layer_1 (nn.MultiheadAttention): First multi-head attention layer.
-        attention_layer_2 (nn.MultiheadAttention): Second multi-head attention layer.
-        classify (nn.Linear): Linear layer for classification.
-    Methods:
-        __init__(d_model, n_tokens, max_positions, n_heads, *args, **kwargs):
-            Initializes the ComplexTransformer model with the given parameters.
-        forward(x):
-            Performs a forward pass through the model.
-    """
-    def __init__(self, d_model, n_tokens, max_positions, n_heads, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # semantic + positional embedding
-        self.max_positions = max_positions
-        self.embed = nn.Embedding(n_tokens, d_model)
-        self.position = PositionalEmbedding(max_positions, d_model)
-        # single attention layer
-        self.attention_layer_1 = nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
-
-        self.attention_layer_2 = nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
-        # classification layer ouptuts the probability of each token in the vocabulary. 
-        self.classify = nn.Linear(d_model, n_tokens)
-
-    def forward(self, x):
-        """
-        Perform a forward pass through the model.
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, sequence_length).
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, num_classes) representing the final logits.
-        """
-        x = self.embed(x)
         
-        positions = self.position(x)
-        x = x + positions
-        
-        attn_1 , attention_weights = self.attention_layer_1(x, x, x, attn_mask=torch.tril(torch.ones(self.max_positions, self.max_positions)))
-        x = x + attn_1
+        return (final_logit, attention_weights) if return_weights else final_logit
 
-        attn_2, attention_weights = self.attention_layer_2(x, x, x, attn_mask=torch.tril(torch.ones(self.max_positions, self.max_positions)))
-        x = x + attn_2
-        
-        logits = self.classify(x)
-        final_logit = logits[:, -1, :]
-        return final_logit
-    
 def optimize_model(model, criterion, optimizer, dataset, n_epochs=1000, batch_size=32):
     """
     Trains and evaluates the given model using the specified criterion and optimizer.
