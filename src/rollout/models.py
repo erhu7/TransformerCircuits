@@ -48,7 +48,7 @@ class FlexibleTransformer(nn.Module):
         self.classify = nn.Linear(d_model, n_tokens)
         
         # Create and register attention mask
-        mask = torch.tril(torch.ones(max_positions, max_positions))
+        mask = torch.triu(torch.full((max_positions, max_positions), float('-inf')), diagonal=1)
         self.register_buffer('attn_mask', mask)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
