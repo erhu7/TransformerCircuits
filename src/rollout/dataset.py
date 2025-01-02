@@ -1,7 +1,24 @@
 import torch
 import numpy as np
 from itertools import permutations
+from torch.utils.data import Dataset
+import math
 
+def generate_combinations(num_tokens, sequence_length, n_back, return_output=True):
+    # generate all permutations of the first sequence_length-1 elements
+    # TODO: Could subsample the permutations to reduce the number of combinations
+    all_perms = list(permutations(range(num_tokens), sequence_length-1))
+    combinations = torch.zeros(len(all_perms), sequence_length, dtype=torch.long)
+    combinations[:,:sequence_length-1] = torch.tensor(all_perms)
+    # now set the last element to a random element in the sequence
+    prompt_inds = torch.randint(0, sequence_length-1-n_back, (len(combinations),))
+    combinations[:,-1] = combinations[np.arange(len(combinations)),prompt_inds]
+    if return_output:
+        output_inds = prompt_inds + n_back
+        output = combinations[np.arange(len(combinations)),output_inds]
+        return combinations, output
+    return combinations
+        
 class InductionDataset:
     # A dataset class for generating sequences with induction patterns.
     # TODO could subclass torch.utils.data.Dataset for more flexibility
@@ -18,21 +35,9 @@ class InductionDataset:
         torch.manual_seed(random_seed)
         assert( num_tokens > sequence_length, "num_tokens must be greater than sequence_length")
         assert(n_back < sequence_length-1, "n_back must be less than sequence_length-1")
-        def generate_combinations(num_tokens, sequence_length, n_back):
-            # generate all permutations of the first sequence_length-1 elements
-            # TODO: Could subsample the permutations to reduce the number of combinations
-            all_perms = list(permutations(range(num_tokens), sequence_length-1))
-            combinations = torch.zeros(len(all_perms), sequence_length, dtype=torch.long)
-            combinations[:,:sequence_length-1] = torch.tensor(all_perms)
-            # now set the last element to a random element in the sequence
-            prompt_inds = torch.randint(0, sequence_length-1-n_back, (len(combinations),))
-            combinations[:,-1] = combinations[np.arange(len(combinations)),prompt_inds]
-            output_inds = prompt_inds + n_back
-            output = combinations[np.arange(len(combinations)),output_inds]
-            return combinations, output
-        
         self.n = num_tokens
         self.n_back = n_back
+
         self.X, self.y = generate_combinations(num_tokens, sequence_length, n_back)
         shuffle_idx = torch.randperm(len(self.X))
         self.X = self.X[shuffle_idx]
@@ -65,3 +70,4 @@ class InductionDataset:
         X = self.X[idx]
         y = self.y[idx]
         return X, y
+    
