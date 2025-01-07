@@ -11,7 +11,7 @@ def generate_combinations(num_tokens, sequence_length, n_back, return_output=Tru
     combinations = torch.zeros(len(all_perms), sequence_length, dtype=torch.long)
     combinations[:,:sequence_length-1] = torch.tensor(all_perms)
     # now set the last element to a random element in the sequence
-    prompt_inds = torch.randint(0, sequence_length-1-n_back, (len(combinations),))
+    prompt_inds = torch.randint(0, sequence_length-1-n_back, (len(combinations),), dtype=torch.long)
     combinations[:,-1] = combinations[np.arange(len(combinations)),prompt_inds]
     if return_output:
         output_inds = prompt_inds + n_back

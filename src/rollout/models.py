@@ -32,6 +32,7 @@ class FlexibleTransformer(nn.Module):
         max_positions: int,
         n_heads: int,
         n_attn_layers: int,
+        include_bias: bool = False
     ):
         super().__init__()
         # Embeddings
@@ -40,7 +41,7 @@ class FlexibleTransformer(nn.Module):
         
         # Create n attention layers
         self.attention_layers = nn.ModuleList([
-            nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
+            nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True, bias=include_bias)
             for _ in range(n_attn_layers)
         ])
         
@@ -63,7 +64,6 @@ class FlexibleTransformer(nn.Module):
             
         x = self.embed(x)
         x = x + self.position(x)
-        
         attention_weights = []
         for attention_layer in self.attention_layers:
             attn_out, weights = attention_layer(x, x, x, attn_mask=self.attn_mask)
