@@ -76,4 +76,13 @@ def movmean(data, window_size):
     return (cumsum[window_size:] - cumsum[:-window_size]) / window_size
 
 
+def get_QKV(layer, d_model):
+    return dict(Q = layer.in_proj_weight[:d_model],
+                K = layer.in_proj_weight[d_model:2*d_model],
+                V = layer.in_proj_weight[2*d_model:3*d_model])
 
+def embed_proj(model, X):
+    X = model.embed(X)
+    X = X + model.position(X)
+    return X
+    

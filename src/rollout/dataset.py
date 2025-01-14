@@ -71,3 +71,76 @@ class InductionDataset:
         y = self.y[idx]
         return X, y
     
+
+class InductionValueDataset(Dataset):
+    def __init__(self, num_tokens, sequence_length, random_seed=42):
+        assert sequence_length <= num_tokens, "sequence_length must be less than or equal to num_tokens"
+
+        torch.manual_seed(random_seed)
+        self.num_tokens = num_tokens
+        self.sequence_length = sequence_length
+
+        
+        X, y = generate_combinations(num_tokens, sequence_length, 1, return_output=True)
+        self.n_samples = X.shape[0]
+
+        self.data = X
+
+        self.task_tokens = dict(induction=num_tokens,
+                                value=num_tokens+1)
+        self.labels = dict(induction=y,
+                           value=torch.max(X, dim=1).values)
+        # set the second half of the data to be the value task
+        del X, y 
+
+        shuffle_idx = torch.randperm(self.n_samples)
+
+        self.n_train = int(self.n_samples * 0.8)
+        self.train_idx = torch.arange(self.n_train)
+
+        self.test_idx = torch.arange(self.n_train, self.n_samples)
+        self.n_test = len(self.test_idx)
+    
+    def __len__(self):
+        return self.n_samples
+    
+    def __getitem__(self, idx, task=None):
+        assert task in [None, "value", "induction"], "task must be None, value, or induction. If None, a task will be randomly selected."
+        if task is None:
+            task = np.random.choice(["value", "induction"])
+        if type(idx == int):
+            n_items = 1
+        else:
+            n_items = len(idx)
+        sample = torch.zeros(n_items, self.sequence_length + 1)
+        sample[:, 1:] = self.data[idx]
+        sample[:, 0] = self.task_tokens[task]
+        label = self.labels[task][idx]
+        
+        return sample, label
+    
+    def generate_batch(self, batch_size, type='train', task=None):
+        """
+        Generates a batch of data for training or testing.
+        Args:
+            batch_size (int): Number of samples in the batch.
+            type (str, optional): Type of data to generate ('train' or 'test'). Defaults to 'train'.
+        Returns:
+            tuple: A tuple containing the input sequences (X) and the output sequences (y).
+        """
+        #TODO: implment interleaved tasks in training
+        assert task in [None, "value", "induction"], "task must be None, value, or induction. If None, a task will be randomly selected."
+        
+        if task is None:
+            task = np.random.choice(["value", "induction"])
+
+        assert type in ['train', 'test'], "type must be either 'train' or 'test'"
+        if type == 'train':
+            idx = self.train_idx[torch.randint(0, self.n_train, (batch_size,))]
+        else:
+            idx = self.test_idx[torch.randint(0, self.n_test, (batch_size,))]
+        task_column = torch.ones(batch_size, 1, dtype=torch.long)*self.task_tokens[task]
+        X = torch.cat((task_column, self.data[idx]), dim=1)
+        y = self.labels[task][idx]
+        return X, y
+    
