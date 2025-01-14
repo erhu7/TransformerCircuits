@@ -32,6 +32,7 @@ class FlexibleTransformer(nn.Module):
         max_positions: int,
         n_heads: int,
         n_attn_layers: int,
+        include_bias: bool = False
     ):
         super().__init__()
         # Embeddings
@@ -40,7 +41,7 @@ class FlexibleTransformer(nn.Module):
         
         # Create n attention layers
         self.attention_layers = nn.ModuleList([
-            nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True)
+            nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True, bias=include_bias)
             for _ in range(n_attn_layers)
         ])
         
@@ -57,23 +58,27 @@ class FlexibleTransformer(nn.Module):
     def forward_with_weights(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
         return self._fwd_internal(x, return_weights=True)
     
-    def _fwd_internal(self, x: torch.Tensor, return_weights: bool = False):
+    def _fwd_internal(self, x: torch.Tensor, return_weights: bool = False, return_residuals: bool = False):
         if self.attn_mask.device != x.device:
             self.attn_mask = self.attn_mask.to(x.device)
             
         x = self.embed(x)
         x = x + self.position(x)
-        
         attention_weights = []
+        residual_stream = [x]
         for attention_layer in self.attention_layers:
-            attn_out, weights = attention_layer(x, x, x, attn_mask=self.attn_mask)
+            attn_out, weights = attention_layer(x, x, x, attn_mask=self.attn_mask, average_attn_weights=False)
             x = x + attn_out
             if return_weights:
                 attention_weights.append(weights.detach())
-        
+            if return_residuals:
+                residual_stream.append(x)
         logits = self.classify(x)
         final_logit = logits[:, -1, :]
-        
+        if return_weights & return_residuals:
+            return (final_logit, attention_weights, residual_stream)
+        elif return_residuals:
+            return (final_logit, residual_stream)
         return (final_logit, attention_weights) if return_weights else final_logit
 
 def optimize_model(model, criterion, optimizer, dataset, n_epochs=1000, batch_size=32):
