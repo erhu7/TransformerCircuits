@@ -30,3 +30,6 @@ env/
 .idea/
 .vscode/
 *.swp
+
+# exclude large model data files:
+data/

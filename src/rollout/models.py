@@ -113,7 +113,7 @@ def optimize_model(model, criterion, optimizer, dataset, n_epochs=1000, batch_si
         y_pred = model(X)
         loss = criterion(y_pred, y)
         test_losses.append(loss.item())
-
-        if epoch % 100 == 0:
-            print(f"Epoch {epoch}: Train Loss: {train_losses[-1]}, Test Loss: {test_losses[-1]}")
+        test_accuracy = (y_pred.argmax(dim=-1) == y).float().mean()
+        if epoch % 50 == 0:
+            print(f"Epoch {epoch}: Train Loss: {train_losses[-1]}, Test Loss: {test_losses[-1]}, Test Accuracy: {test_accuracy}")
     return train_losses, test_losses
